@@ -22,7 +22,7 @@ Sagemaker deployment pricing information can be found [here](https://aws.amazon.
 
 ## Setup your SageMaker notebook instance
 
-Setup your notebook instance where you have trained your fast.ai model on a SageMaker notebook instance. To setup a new SageMaker notebook instance with fast.ai installed follow the steps outlined [here](https://course.fast.ai/start_sagemaker.html).
+Setup your notebook instance where you have trained your fastai model on a SageMaker notebook instance. To setup a new SageMaker notebook instance with fastai installed follow the steps outlined [here](https://course.fast.ai/start_sagemaker.html).
 
 Ensure you have the Amazon SageMaker Python SDK installed in the kernel named *Python 3*. An example command to run is the following:
 
@@ -32,7 +32,7 @@ Ensure you have the Amazon SageMaker Python SDK installed in the kernel named *P
 
 **Train your model on your notebook instance**
 
-Create a Jupyter notebook on your SageMaker notebook instance for your project to train your fast.ai model. 
+Create a Jupyter notebook on your SageMaker notebook instance for your project to train your fastai model. 
 
 An example based on the pets lesson 1 exercise is the following:
 
@@ -56,8 +56,7 @@ learn.fit_one_cycle(3, max_lr=slice(1e-6,1e-4))
 Now that you have trained your `learn` object you can export the `data` object and save the model weights with the following commands:
 
 ```python
-data.export()
-learn.save('resnet50')
+learn.export(path_img/'models/resnet50.pkl')
 ```
 
 **Zip model artefacts and upload to S3**
@@ -70,8 +69,7 @@ with tarfile.open(path_img/'models/model.tar.gz', 'w:gz') as f:
     t = tarfile.TarInfo('models')
     t.type = tarfile.DIRTYPE
     f.addfile(t)
-    f.add(path_img/'models/resnet50.pth', arcname='resnet50.pth')
-    f.add(path_img/'export.pkl', arcname='export.pkl')
+    f.add(path_img/'models/resnet50.pkl', arcname='resnet50.pkl')
 ```
 
 Now we can upload them to S3 with the following commands. 
@@ -87,9 +85,7 @@ model_artefact = sagemaker_session.upload_data(path=str(path_img/'models/model.t
 
 ## Create model serving script
 
-Now we are ready to deploy our model to the SageMaker model hosting service. We will use the SageMaker Pytthon SDK to do this.
-
-Since fast.ai is built on Pytorch we can use the built-in support SageMaker has for Pytorch. All we need to do is create a script for the model serving logic. For more information on how the PyTorch model serving works check the project page [here](https://github.com/aws/sagemaker-python-sdk/tree/master/src/sagemaker/pytorch#sagemaker-pytorch-model-server).
+Now we are ready to deploy our model to the SageMaker model hosting service. We will use the [SageMaker Python SDK](https://github.com/aws/sagemaker-python-sdk) with the Amazon SageMaker [open-source PyTorch container](https://github.com/aws/sagemaker-pytorch-container) as this container has support for the fast.ai library. Using one of the pre-defined Amazon SageMaker containers makes it easy to write a script and then run it in Amazon SageMaker in just a few steps.
 
 To serve models in SageMaker, we need a script that implements 4 methods: `model_fn`, `input_fn`, `predict_fn` & `output_fn`. 
 * The `model_fn` method needs to load the PyTorch model from the saved weights from disk. 
@@ -97,7 +93,9 @@ To serve models in SageMaker, we need a script that implements 4 methods: `model
 * The `predict_fn` method takes the deserialized request object and performs inference against the loaded model.
 * The `output_fn` method takes the result of prediction and serializes this according to the response content type.
 
-The methods `input_fn` and `input_fn` are optional and if obmitted SageMaker will assume the input and output objects are of type [NPY](https://docs.scipy.org/doc/numpy/neps/npy-format.html) format with Content-Type `application/x-npy`.
+The methods `input_fn` and `output_fn` are optional and if obmitted SageMaker will assume the input and output objects are of type [NPY](https://docs.scipy.org/doc/numpy/neps/npy-format.html) format with Content-Type `application/x-npy`.
+
+For more information on how the PyTorch model serving works check the project page [here](https://github.com/aws/sagemaker-python-sdk/tree/master/src/sagemaker/pytorch#sagemaker-pytorch-model-server).
 
 An example script to serve a vision resnet model can be found below:
 
@@ -111,15 +109,11 @@ logger.setLevel(logging.DEBUG)
 JSON_CONTENT_TYPE = 'application/json'
 JPEG_CONTENT_TYPE = 'image/jpeg'
 
+# loads the model into memory from disk and returns it
 def model_fn(model_dir):
     logger.info('model_fn')
     path = Path(model_dir)
-    print('Creating DataBunch object')
-    empty_data = ImageDataBunch.load_empty(path)
-    arch_name = os.path.splitext(os.path.split(glob.glob(f'{model_dir}/resnet*.pth')[0])[1])[0]
-    print(f'Model architecture is: {arch_name}')
-    arch = getattr(models, arch_name)    
-    learn = create_cnn(empty_data, arch, pretrained=False).load(path/f'{arch_name}')
+    learn = load_learner(model_dir, fname='resnet50.pkl')
     return learn
 
 # Deserialize the Invoke request body into an object we can perform prediction on
